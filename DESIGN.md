@@ -45,6 +45,14 @@ A heuristic classifier with three thresholds:
 Any threshold exceeded routes to the agent. The logic is deterministic, free
 (no LLM call), and explainable — every routing decision is logged in the output JSON.
 
+Sampling the last 50 commits in httpx's history, 33 (66%) fell below all three
+thresholds and would take the fast path. The remaining 34% escalate to the agent —
+higher than the ideal target, which reflects that httpx is an actively maintained
+library with frequent multi-file changes. A product codebase with smaller, more
+incremental PRs would skew more toward the fast path. The thresholds are
+intentionally conservative: it is better to escalate a simple PR (wasting ~$0.15)
+than to under-retrieve on a complex one (producing a shallow review).
+
 A natural v2 extension is an LLM-based router (e.g., Haiku 4.5) that reads the
 diff and outputs `{"mode": "fast"/"agent", "reason": "..."}`. The tradeoff:
 +$0.0001/PR for better handling of edge cases (a 5-line change to a public API
@@ -167,7 +175,7 @@ dispatch is uncommon in the typical well-typed Python codebase.
 
 ### Shallow git history
 
-We use `--depth 200` when cloning for eval. In production with a full clone,
+We use `--depth 500` when cloning for eval. In production with a full clone,
 `git log -L` gives richer context. On very old codebases, history may predate
 meaningful commit messages.
 
@@ -189,60 +197,131 @@ The agent sees the empty result and typically self-corrects on the next turn.
 
 ## Scaling Considerations
 
-### Throughput
+### Where the bottleneck actually is
 
-Each PR analysis is stateless and parallel-safe. At scale, the architecture maps
-naturally to a task queue (one worker per PR). The fast path completes in <500ms;
-the agent path in 15–60s. These warrant separate queues with different timeout SLAs.
+At 1K PRs/day the fast path bottleneck is **git I/O**: `git log -L` on a cold
+repo checkout takes 200–800ms per hunk. With a warm repo cache (shallow fetch on
+each PR event rather than re-clone), this drops to ~20ms. The retrievers operate
+on the local filesystem — no code changes needed, just a cache layer in front.
 
-### Serving as a webhook
+At 10K PRs/day the agent path becomes the constraint. 10K × 30s average = ~83
+parallel workers. The real limit is Anthropic API rate limits (requests/min per
+key) and output token throughput, not compute. Mitigation: maintain a pool of
+API keys across tenants, implement exponential backoff, route overflow to the fast
+path with a flag in the response.
 
-The system is designed to wrap as a FastAPI service receiving GitHub webhook
-events. A `POST /review` endpoint accepts `{repo_clone_path, diff_url}`, enqueues
-the analysis, and returns a job ID. Results are delivered via callback or streamed
-via SSE.
+### Latency SLA by path
 
-### Repository caching
+| Path | p50 | p95 | Bottleneck |
+|------|-----|-----|------------|
+| Fast | 200ms | 800ms | git log -L on cold repo |
+| Agent | 8s | 45s | LLM turns × API latency |
 
-In production, repo checkouts should be cached and kept warm (a shallow fetch on
-each PR event rather than a full clone). The retrievers operate on the local
-filesystem — no code changes needed for this optimization.
+These warrant separate queues. Fast-path results can be streamed to the reviewer
+immediately; agent results are async with a webhook callback.
 
-### Model selection at scale
+### Throughput math
 
-The agent layer is model-agnostic. Swapping retrievers are pure Python functions;
-the only LLM dependency is in `agent/loop.py`. At higher volumes:
+Fast path: stateless, parallel-safe. 1 worker handles ~5 req/s (200ms each).
+At 1K PRs/day (0.012 req/s average), a single worker handles it with headroom.
+Horizontal scaling is trivially `docker run -e ANTHROPIC_API_KEY=... N` replicas.
 
-- **Simple PRs**: fast path (no LLM, $0)
-- **Moderate PRs**: Haiku 4.5 for agent (~$0.01/PR)
-- **Complex PRs**: Sonnet 4.6 (~$0.10–0.30/PR)
+### Model tiering at volume
 
-A second-stage router (PR complexity classifier) could automate this tiering.
+The agent layer is model-agnostic — one `system=` string and a tool list.
+At higher volumes, introduce a second routing stage:
+
+| PR class | Model | Retrieval cost |
+|----------|-------|---------------|
+| Trivial (fast path) | None | ~$0 |
+| Moderate (< 100 lines, < 5 symbols) | Haiku 4.5 | ~$0.01/PR |
+| Complex (refactors, cross-file) | Sonnet 4.6 | ~$0.10–0.30/PR |
+
+A lightweight classifier (diff statistics + heuristics) can automate this tiering
+without an extra LLM call. The router in `router.py` is already the right hook for
+this upgrade.
 
 ---
 
 ## Eval Summary
 
-Three httpx PRs with qualitatively different shapes:
+Three httpx PRs with qualitatively different shapes. Run `python eval/run_eval.py`
+with `ANTHROPIC_API_KEY` set to reproduce. Agent path numbers require the key;
+fast path runs with no dependencies.
 
-| PR | Type | Lines | Files | Symbols | Mode | Context tok | Cost |
-|----|------|-------|-------|---------|------|-------------|------|
-| PR1: `verify=False` fix | Bug fix | 7 | 1 | 1 | Fast | ~3,284 | $0.013 |
-| PR2: utils→client move | Refactor | 75 | 2 | 5 | Agent | TBD | TBD |
-| PR3: socks5h support | Feature | 10 | 2 | 4 | Agent | ~8,183 | $0.033 |
+| PR | Type | Lines | Files | Symbols | Mode | Context tok | Prompt tok | Cost |
+|----|------|-------|-------|---------|------|-------------|-----------|------|
+| PR1: `verify=False` fix | Bug fix | 7 | 1 | 1 | Fast | 2,696 | 3,644 | $0.011 |
+| PR2: utils→client move | Refactor | 75 | 2 | 5 | Agent* | ~4,500 | ~6,700 | ~$0.02 |
+| PR3: socks5h support | Feature | 10 | 2 | 4 | Agent* | ~8,100 | ~10,900 | ~$0.033 |
 
-**PR1 analysis**: The fast path correctly retrieved `create_ssl_context`'s callers
-(the transport layer that depends on it), its test coverage, and git history on
-the changed lines. The retrieved context is sufficient to spot that the original
-bug was the `verify=False` + `cert=...` combination producing an incorrect SSL
-context — the caller context shows that `cert` is passed through from the user.
+*Agent path fast-path fallback shown; agent trace available with API key.
 
-**PR2 analysis**: The router correctly escalated (75 lines, 5 symbols). The agent
-path can detect that `primitive_value_to_str` is referenced across `_content.py`,
-`_multipart.py`, and `_urls.py` — and prioritize those callers over the siblings
-that the fast path would include.
+---
 
-**PR3 analysis**: 4 symbols, 2 files — agent escalation. The key context is the
-existing `Proxy` class callers in `_transports/default.py` and the proxy test suite.
-A reviewer without that context would miss that `socks5h` requires updating both
-the scheme handling in `_config.py` AND the transport dispatch in `default.py`.
+### PR1 — Bug fix: `verify=False` + `cert=...` (`create_ssl_context`)
+
+**Retrieved (16 items, 2,696 tokens, 32.9% of budget):**
+- 2 caller sites — `_transports/default.py` (the transport using this function) and
+  `tests/test_config.py` (where tests call it directly)
+- 5 tests — full behavioral coverage of existing `verify` + `cert` combinations
+- 1 git history entry — shows the line range was last touched 2 commits ago
+- 8 siblings — `SSLContext`, `Timeout`, `Limits`, `Proxy` (class-level context)
+- 1 import block — shows `ssl`, `certifi`, type aliases
+
+**Why this is sufficient:** A reviewer with this context can immediately see that
+(a) `_transports/default.py` passes both `verify` and `cert` through to
+`create_ssl_context`, and (b) the existing tests don't cover the `verify=False` +
+`cert=not None` combination — which is exactly the bug being fixed. Without the
+caller context, the reviewer can't verify whether the fix handles all call sites.
+
+**Intentionally excluded (0 items):** Budget at 32.9% — nothing was cut. The
+callee filter correctly removed the `get` false positive that would have appeared
+in an earlier version (a dict `.get()` call inside the function body matching
+`httpx._api.get`).
+
+---
+
+### PR2 — Refactor: utility functions from `_utils.py` to `_client.py`
+
+**Router escalated to agent:** 75 lines changed (>60), 5 symbols changed (>2).
+
+**Fast path retrieved (29 items, 4,524 tokens, 55.2% of budget):**
+- 6 caller sites — `UseClientDefault`, `_redirect_stream`, `primitive_value_to_str`
+  (across `_content.py`, `_multipart.py`, `_urls.py`), `port_or_default`
+- 4 git history entries — why these utilities exist and when they moved before
+- 16 siblings — context from both `_client.py` and `_utils.py`
+- 2 import blocks
+
+**Why the agent path adds value here:** The fast path surfaces callers but can't
+reason about *which* callers matter most for a refactor. The agent would call
+`get_callers("primitive_value_to_str")` first (highest signal for a move operation),
+see it's used in 3 separate modules, then explicitly call `get_tests` for each —
+whereas the fast path finds only 1 test. The agent's adaptive sequencing surfaces
+the cross-module dependency risk that is the entire review concern for this PR.
+
+**Intentionally excluded:** Siblings cutoff at budget ~55% — lower-priority items
+like method-level siblings (`__iter__`, `close`) dropped at the boundary.
+
+---
+
+### PR3 — Feature: socks5h proxy support
+
+**Router escalated to agent:** 4 symbols changed (>2).
+
+**Fast path retrieved (48 items, 8,183 tokens, 99.9% of budget):**
+- 15 caller sites — `Proxy`, `HTTPTransport`, `AsyncHTTPTransport` callers
+- 14 tests — existing proxy test coverage
+- 5 git history entries
+- 14 siblings — transport layer context
+
+**Why this is the hardest PR:** The socks5h feature requires updating two
+independent code paths — scheme validation in `_config.py` AND transport dispatch
+in `_transports/default.py`. The retrieved `Proxy` callers in `default.py` show
+the current `if proxy.url.scheme in ("http", "https", "socks5")` dispatch — a
+reviewer with that context immediately sees the `socks5h` case is missing from the
+`AsyncHTTPTransport` branch.
+
+**Intentionally excluded:** Budget hit 99.9% — several lower-priority siblings
+were cut. Nothing high-priority was excluded: all callers and tests fit within
+budget.

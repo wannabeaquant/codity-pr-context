@@ -2,7 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .diff_parser import ParsedDiff
-from .ranker import rank_and_pack
+from .ranker import rank_and_pack, PackResult
 from .retrievers.base import RetrievalResult
 from .retrievers.callees import get_callees
 from .retrievers.callers import get_callers
@@ -12,7 +12,7 @@ from .retrievers.imports import get_imports
 from .retrievers.git_history import get_git_history
 
 
-def run_fast_path(repo_path: Path, diff: ParsedDiff) -> list[RetrievalResult]:
+def run_fast_path(repo_path: Path, diff: ParsedDiff) -> PackResult:
     """Run all retrievers deterministically, then rank and pack to budget."""
     all_results: list[RetrievalResult] = []
 
@@ -29,8 +29,7 @@ def run_fast_path(repo_path: Path, diff: ParsedDiff) -> list[RetrievalResult]:
         ))
 
     for symbol in diff.changed_symbols:
-        # find which file the symbol lives in
-        source_file = _find_symbol_file(diff, symbol)
+        source_file = _find_symbol_file(repo_path, diff, symbol)
         if source_file is None:
             continue
 
@@ -43,13 +42,37 @@ def run_fast_path(repo_path: Path, diff: ParsedDiff) -> list[RetrievalResult]:
         if rel_file.endswith(".py"):
             all_results.extend(get_siblings(repo_path, rel_file, diff.changed_symbols))
 
-    return rank_and_pack(all_results)
+    return rank_and_pack(all_results)  # returns PackResult
 
 
-def _find_symbol_file(diff: ParsedDiff, symbol: str) -> str | None:
-    """Return the first changed file that likely contains `symbol`."""
-    for hunk in diff.hunks:
-        if hunk.file.endswith(".py"):
-            # the symbol is assumed to be in one of the changed files
-            return hunk.file
-    return None
+def _find_symbol_file(repo_path: Path, diff: ParsedDiff, symbol: str) -> str | None:
+    """Return the changed file that actually defines `symbol`.
+
+    Parses each changed .py file with AST to find the one that contains the
+    symbol definition. Falls back to the first .py file if not found — handles
+    cases where the file hasn't been written to disk at parse time.
+    """
+    import ast as _ast
+    first_py: str | None = None
+
+    for rel_file in dict.fromkeys(h.file for h in diff.hunks):
+        if not rel_file.endswith(".py"):
+            continue
+        if first_py is None:
+            first_py = rel_file
+
+        abs_path = repo_path / rel_file
+        if not abs_path.exists():
+            continue
+        try:
+            source = abs_path.read_text(encoding="utf-8", errors="replace")
+            tree = _ast.parse(source)
+        except (SyntaxError, OSError):
+            continue
+
+        for node in _ast.walk(tree):
+            if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+                if node.name == symbol:
+                    return rel_file
+
+    return first_py

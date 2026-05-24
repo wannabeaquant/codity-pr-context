@@ -14,12 +14,29 @@ class PythonAdapter:
             return []
 
         symbols = []
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                # only top-level and class-level methods (not nested)
+        # Only iterate tree.body for true top-level definitions.
+        # ast.walk recurses into nested scopes and returns inner functions/classes too.
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
                 symbols.append({
                     "name": node.name,
-                    "type": "class" if isinstance(node, ast.ClassDef) else "function",
+                    "type": "class",
+                    "start_line": node.lineno,
+                    "end_line": node.end_lineno or node.lineno,
+                })
+                # include direct class methods (one level deep only)
+                for child in node.body:
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        symbols.append({
+                            "name": child.name,
+                            "type": "method",
+                            "start_line": child.lineno,
+                            "end_line": child.end_lineno or child.lineno,
+                        })
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                symbols.append({
+                    "name": node.name,
+                    "type": "function",
                     "start_line": node.lineno,
                     "end_line": node.end_lineno or node.lineno,
                 })

@@ -104,7 +104,8 @@ python -m pr_context /path/to/repo my_pr.diff --json-out > plan.json
 
 ```bash
 # clone httpx eval repo (done once)
-git clone --depth 200 https://github.com/encode/httpx eval/repos/httpx
+# use --depth 500 to ensure all 3 eval commits (~200 back from HEAD) are reachable
+git clone --depth 500 https://github.com/encode/httpx eval/repos/httpx
 
 # run eval (fast path — no API key needed)
 python eval/run_eval.py
