@@ -12,5 +12,9 @@
 | 2026-05-24 | Stop before the review LLM call | Deliverable is the retrieval/context, not the review itself; avoids extra cost during evals | Running full review end-to-end |
 
 ## Session Logs
+- 2026-05-24: Initial implementation complete. All core files written, 10/10 tests pass, eval runner works on all 3 PRs (fast path). Agent path requires ANTHROPIC_API_KEY to activate for PR2/PR3.
 
 ## Next Session Priorities
+- Run `ANTHROPIC_API_KEY=sk-... python eval/run_eval.py` to get agent-path outputs for PR2 and PR3
+- Add agent trace outputs to eval/outputs/ and update DESIGN.md eval table with real numbers
+- Push final state before submission
