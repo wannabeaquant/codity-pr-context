@@ -1,0 +1,6 @@
+anthropic>=0.40.0
+tiktoken>=0.7.0
+unidiff>=0.7.5
+click>=8.1.0
+gitpython>=3.1.40
+pytest>=8.0.0
