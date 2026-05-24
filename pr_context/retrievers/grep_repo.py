@@ -39,7 +39,7 @@ def grep_repo(
         content = "\n".join(lines[start:end])
 
         results.append(RetrievalResult(
-            source="grep",
+            source="grep_repo",
             symbol=symbol or pattern,
             file=rel_file,
             start_line=start + 1,
