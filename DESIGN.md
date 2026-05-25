@@ -53,17 +53,17 @@ incremental PRs would skew more toward the fast path. The thresholds are
 intentionally conservative: it is better to escalate a simple PR (wasting ~$0.15)
 than to under-retrieve on a complex one (producing a shallow review).
 
-A natural v2 extension is an LLM-based router (e.g., Haiku 4.5) that reads the
-diff and outputs `{"mode": "fast"/"agent", "reason": "..."}`. The tradeoff:
-+$0.0001/PR for better handling of edge cases (a 5-line change to a public API
-surface would correctly escalate; a 200-line documentation change would correctly
-stay fast). Not implemented in v1 because the heuristic handles the real-world
-distribution well.
+The primary router is a Haiku 4.5 LLM call that reads the diff and returns
+`{"mode": "fast"/"agent", "reason": "..."}`. Cost: ~$0.0001/PR. This correctly
+handles cases heuristics miss — a 5-line change to a public API surface escalates;
+a 200-line documentation rewrite stays fast. The heuristic runs as a fallback when
+`ANTHROPIC_API_KEY` is unset, keeping fast-path tests and offline usage key-free.
+Router decisions are tagged `[LLM router]` or `[heuristic]` in the output JSON.
 
 ### Fast Path
 
-Runs all retrievers unconditionally, collects results, and greedily packs to the
-8K token budget sorted by priority. Deterministic, <1s, no API calls.
+Runs all retrievers unconditionally, collects results, and packs to the 8K token
+budget using a diversity-aware greedy knapsack. Deterministic, <1s, no LLM calls.
 
 **Priority ordering rationale:**
 - Callees (0.90): Understanding what a function calls is the most fundamental
@@ -89,6 +89,11 @@ then decides which retrievers to call and in what order. Stopping conditions:
 
 The agent receives token cost feedback after each tool call
 (`accumulated_context_tokens` in the tool result), so it can self-regulate.
+
+A `note` scratchpad tool lets the agent record reasoning threads explicitly —
+suspicions about breaking changes, gaps in coverage, follow-up callees to check.
+Notes are prepended to every subsequent tool result so open threads stay visible
+across turns without relying on attention alone.
 
 **Why Sonnet, not Haiku?** Multi-turn tool-use chains degrade on smaller models.
 Haiku tends to call tools in rigid, non-adaptive sequences. Sonnet reasons about
@@ -145,13 +150,23 @@ the agent is explicitly instructed to call it as soon as context is sufficient.
 
 ## Ranking and Prioritization
 
-The ranker is a greedy knapsack: sort by priority descending, pack until budget
-exhausted. Deduplication by `(file, start_line)` runs first.
+The ranker is a diversity-aware greedy knapsack. Deduplication by `(file, start_line)`
+runs first, then at each packing step the item with the highest adjusted priority is
+selected:
 
-**Why not weighted scoring?** Greedy knapsack has a known worst case (can exclude
-a high-value item to fit many medium items) but works extremely well in practice
-because priority scores encode the actual importance hierarchy. A weighted scorer
-would need calibration against human judgments we don't have.
+```
+adjusted_priority = base_priority - 0.05 × (items already packed from same file)
+```
+
+This prevents budget saturation by a single file. Without diversity, 8 callers from
+`_transports/default.py` all rank above a caller from `_config.py` — even though
+the cross-file caller is more valuable for blast-radius analysis. With diversity,
+the second result from `default.py` gets a 0.05 penalty, ensuring results spread
+across files when base priorities are close.
+
+**Why not weighted scoring?** A weighted scorer would need calibration against human
+judgments we don't have. The greedy approach with diversity correction handles the
+real failure mode (same-file saturation) without requiring labeled data.
 
 **What gets cut at the budget boundary?** Typically siblings and imports, which
 have lowest priority. This is correct: a reviewer can infer local conventions from
@@ -164,14 +179,15 @@ the diff context; they can't infer caller contracts without explicit retrieval.
 ### False negatives in callee detection
 
 The Python AST-based callee extractor identifies function calls syntactically.
-It misses:
+`functools.partial(fn, ...)` and `@wraps(fn)` patterns are now handled — the
+first positional argument is extracted as an indirect callee. Still misses:
 - Calls through `getattr` / dynamic dispatch
 - Monkey-patched functions
-- Functions called via `functools.partial`
+- Functions stored in variables and called later (`fn = get_handler(); fn()`)
 
 Mitigation: the agent path's `grep_repo` tool serves as a catch-all for unusual
 call patterns. For the fast path, this is an acceptable miss rate — dynamic
-dispatch is uncommon in the typical well-typed Python codebase.
+dispatch is uncommon in well-typed Python codebases.
 
 ### Shallow git history
 
