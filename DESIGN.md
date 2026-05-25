@@ -11,10 +11,11 @@ within a token budget — deterministically for simple PRs, adaptively for compl
 ## Architecture
 
 ```
-PR diff → Router → Fast Path  (deterministic, <1s, ~$0.0001)
-                ↘ Agent Path  (Claude Sonnet tool-use loop, ~$0.10–0.30)
-                          ↓
-              JSON retrieval plan + final review prompt
+                        ┌─► Fast Path   (deterministic, <1s,        ~$0.0001)
+PR diff ──► Router ─────┤
+                        └─► Agent Path  (Sonnet tool-use loop, ~$0.10–0.30)
+                                │
+                    JSON retrieval plan + review prompt
 ```
 
 **Router** — primary: Haiku 4.5 reads the diff and returns `{"mode", "reason"}` (~$0.0001).

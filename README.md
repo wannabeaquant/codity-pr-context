@@ -7,23 +7,26 @@ to send to an LLM — while staying within a token budget.
 ## Architecture
 
 ```
-PR diff
-   │
-   ▼
-┌──────────────────────┐   agent  ┌──────────────────────────────────────┐
-│   Router             │─────────►│  Agent Path                          │
-│ Haiku LLM (primary)  │          │  Claude Sonnet tool-use loop         │
-│ heuristic (fallback) │          │  10 tools, up to 8 turns             │
-└──────────────────────┘          └──────────────────────────────────────┘
-   │ fast                                        │
-   ▼                                             │
-Fast Path                                        │
-(all retrievers, diversity-aware pack)           │
-   │                                             │
-   └─────────────────────────────────────────────┘
-                          │
-                          ▼
-              JSON retrieval plan + review prompt
+                    PR diff
+                       │
+                       ▼
+           ┌───────────────────────┐
+           │        Router         │
+           │  Haiku LLM (primary)  │
+           │  heuristic (fallback) │
+           └───────────────────────┘
+                  │         │
+                fast       agent
+                  │         │
+                  ▼         ▼
+            Fast Path   Agent Path
+            all retriev  Sonnet loop
+            rank + pack  10 tools
+                  │         │
+                  └────┬────┘
+                       │
+                       ▼
+           JSON retrieval plan + review prompt
 ```
 
 **Fast path**: deterministic, runs all retrievers, packs to 8K budget with diversity-aware
