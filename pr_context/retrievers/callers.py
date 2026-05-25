@@ -29,7 +29,7 @@ def get_callers(repo_path: Path, symbol: str) -> list[RetrievalResult]:
     for match in call_matches:
         if len(results) >= MAX_CALLERS:
             break
-        rel_file = match.file.lstrip("./").replace("\\", "/")
+        rel_file = match.file  # already normalized by GrepResult.__init__
         if rel_file in seen_files:
             continue
         seen_files.add(rel_file)

@@ -49,11 +49,11 @@ def main(repo_path: Path, diff_path: Path, json_out: bool, budget: int, mode: st
                 click.echo("ANTHROPIC_API_KEY not set — falling back to fast path.", err=True)
             else:
                 click.echo(f"Agent path failed ({type(e).__name__}: {e}) — falling back.", err=True)
-            pack_result = run_fast_path(repo_path, diff)
+            pack_result = run_fast_path(repo_path, diff, budget=budget)
             selected_mode = "fast"
             router_reasoning += " [fell back to fast path]"
     else:
-        pack_result = run_fast_path(repo_path, diff)
+        pack_result = run_fast_path(repo_path, diff, budget=budget)
 
     packed = pack_result.packed
     excluded = pack_result.excluded

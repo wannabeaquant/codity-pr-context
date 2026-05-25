@@ -2,7 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .diff_parser import ParsedDiff
-from .ranker import rank_and_pack, PackResult
+from .ranker import rank_and_pack, PackResult, TOKEN_BUDGET
 from .retrievers.base import RetrievalResult
 from .retrievers.callees import get_callees
 from .retrievers.callers import get_callers
@@ -12,7 +12,7 @@ from .retrievers.imports import get_imports
 from .retrievers.git_history import get_git_history
 
 
-def run_fast_path(repo_path: Path, diff: ParsedDiff) -> PackResult:
+def run_fast_path(repo_path: Path, diff: ParsedDiff, budget: int = TOKEN_BUDGET) -> PackResult:
     """Run all retrievers deterministically, then rank and pack to budget."""
     all_results: list[RetrievalResult] = []
 
@@ -46,7 +46,7 @@ def run_fast_path(repo_path: Path, diff: ParsedDiff) -> PackResult:
         if rel_file.endswith(".py"):
             all_results.extend(get_siblings(repo_path, rel_file, diff.changed_symbols))
 
-    return rank_and_pack(all_results)  # returns PackResult
+    return rank_and_pack(all_results, budget=budget)
 
 
 def _find_symbol_file(repo_path: Path, diff: ParsedDiff, symbol: str) -> str | None:

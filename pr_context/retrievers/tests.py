@@ -25,7 +25,7 @@ def get_tests(repo_path: Path, symbol: str, source_file: str) -> list[RetrievalR
     for match in test_matches:
         if len(results) >= MAX_TESTS:
             break
-        rel_file = match.file.lstrip("./").replace("\\", "/")
+        rel_file = match.file  # already normalized by GrepResult.__init__
         abs_path = repo_path / rel_file
         if not abs_path.exists():
             continue

@@ -77,7 +77,7 @@ def _search_repo(name: str, repo_path: Path, source_file: str) -> RetrievalResul
     matches.sort(key=lambda m: (0 if source_pkg in m.file else 1, m.file))
 
     first = matches[0]
-    rel_file = first.file.lstrip("./").replace("\\", "/")
+    rel_file = first.file  # already normalized by GrepResult.__init__
     lineno = first.lineno
 
     abs_path = repo_path / rel_file

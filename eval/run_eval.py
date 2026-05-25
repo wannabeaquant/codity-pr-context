@@ -53,6 +53,12 @@ def run_case(name: str, diff_file: str, base_commit: str, description: str) -> d
     print(f"  {name}: {description}")
     print(f"{'='*60}", flush=True)
 
+    # record current branch so we can restore after detaching
+    _branch = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=HTTPX_REPO, capture_output=True, text=True,
+    ).stdout.strip() or "master"
+
     # checkout base commit so retrievers see the pre-PR state
     subprocess.run(
         ["git", "checkout", base_commit, "-q"],
@@ -71,9 +77,9 @@ def run_case(name: str, diff_file: str, base_commit: str, description: str) -> d
         env={**os.environ},
     )
 
-    # restore HEAD
+    # restore original branch (git checkout HEAD is a no-op in detached state)
     subprocess.run(
-        ["git", "checkout", "HEAD", "-q"],
+        ["git", "checkout", _branch, "-q"],
         cwd=HTTPX_REPO, capture_output=True
     )
 
@@ -178,8 +184,13 @@ def main() -> None:
 
     print_comparison_table(results)
 
-    # restore httpx to HEAD
-    subprocess.run(["git", "checkout", "HEAD", "-q"], cwd=HTTPX_REPO, capture_output=True)
+    # final restore (in case last case errored before restoring)
+    final_branch = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=HTTPX_REPO, capture_output=True, text=True,
+    ).stdout.strip()
+    if final_branch == "HEAD":  # still detached
+        subprocess.run(["git", "checkout", "master", "-q"], cwd=HTTPX_REPO, capture_output=True)
     print("Done. Outputs saved to eval/outputs/")
 
 

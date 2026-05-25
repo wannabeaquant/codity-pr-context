@@ -32,7 +32,13 @@ CALLEE_BLOCKLIST: frozenset[str] = frozenset({
 
 class GrepResult:
     def __init__(self, file: str, lineno: int, line: str):
-        self.file = file
+        # Normalize to a clean forward-slash relative path regardless of OS or tool.
+        # rg on Windows emits .\path\to\file.py; lstrip("./") would strip individual
+        # chars and leave /path/... which breaks repo_path / rel_file on Windows.
+        p = file.replace("\\", "/")
+        while p.startswith("./"):
+            p = p[2:]
+        self.file = p.lstrip("/")
         self.lineno = lineno
         self.line = line
 
