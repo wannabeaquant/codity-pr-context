@@ -11,3 +11,9 @@ eval/repos/
 eval/outputs/*.json
 *.log
 .DS_Store
+
+# Dev session artifacts
+CLAUDE.md
+MEMORY.md
+ERRORS.md
+SESSION_NOTES.md
