@@ -34,7 +34,13 @@ case, and a **Claude Sonnet agent loop** for complex PRs.
 
 ### Router
 
-A heuristic classifier with three thresholds:
+The primary router is a Haiku 4.5 LLM call that reads the diff and returns
+`{"mode": "fast"/"agent", "reason": "..."}`. Cost: ~$0.0001/PR. This handles
+cases pure heuristics miss: a 5-line change to a public API surface escalates; a
+200-line documentation rewrite stays fast. Router decisions are tagged `[LLM router]`
+in the output JSON.
+
+**Heuristic fallback** (used when `ANTHROPIC_API_KEY` is absent):
 
 | Signal | Threshold | Rationale |
 |--------|-----------|-----------|
@@ -42,23 +48,11 @@ A heuristic classifier with three thresholds:
 | Files changed | > 3 | Signals cross-module impact |
 | Symbols changed | > 2 | Signals interface-level change |
 
-Any threshold exceeded routes to the agent. The logic is deterministic, free
-(no LLM call), and explainable — every routing decision is logged in the output JSON.
-
-Sampling the last 50 commits in httpx's history, 33 (66%) fell below all three
-thresholds and would take the fast path. The remaining 34% escalate to the agent —
-higher than the ideal target, which reflects that httpx is an actively maintained
-library with frequent multi-file changes. A product codebase with smaller, more
-incremental PRs would skew more toward the fast path. The thresholds are
-intentionally conservative: it is better to escalate a simple PR (wasting ~$0.15)
-than to under-retrieve on a complex one (producing a shallow review).
-
-The primary router is a Haiku 4.5 LLM call that reads the diff and returns
-`{"mode": "fast"/"agent", "reason": "..."}`. Cost: ~$0.0001/PR. This correctly
-handles cases heuristics miss — a 5-line change to a public API surface escalates;
-a 200-line documentation rewrite stays fast. The heuristic runs as a fallback when
-`ANTHROPIC_API_KEY` is unset, keeping fast-path tests and offline usage key-free.
-Router decisions are tagged `[LLM router]` or `[heuristic]` in the output JSON.
+The heuristic is intentionally conservative — escalating a simple PR wastes ~$0.15,
+while under-retrieving on a complex one produces a shallow review. Sampling the last
+50 commits in httpx's history, 33 (66%) fell below all thresholds and would take the
+fast path. All tests and offline usage run against the heuristic, keeping them
+key-free. Router decisions are tagged `[heuristic]` when the fallback fires.
 
 ### Fast Path
 
@@ -124,7 +118,7 @@ cost is effectively $0.
 
 ### Agent path cost ceiling
 
-8 turns × 1,024 max output tokens × $15/1M (Sonnet output) = $0.12 in output
+8 turns × 2,048 max output tokens × $15/1M (Sonnet output) = $0.25 in output
 costs, plus input accumulation. In practice, the agent typically stops at 3–5
 turns, costing $0.05–0.15 total. The `done` tool is the most important cost lever:
 the agent is explicitly instructed to call it as soon as context is sufficient.
@@ -244,18 +238,19 @@ Horizontal scaling is trivially `docker run -e ANTHROPIC_API_KEY=... N` replicas
 
 ### Model tiering at volume
 
-The agent layer is model-agnostic — one `system=` string and a tool list.
-At higher volumes, introduce a second routing stage:
+The current model stack:
 
-| PR class | Model | Retrieval cost |
-|----------|-------|---------------|
-| Trivial (fast path) | None | ~$0 |
-| Moderate (< 100 lines, < 5 symbols) | Haiku 4.5 | ~$0.01/PR |
-| Complex (refactors, cross-file) | Sonnet 4.6 | ~$0.10–0.30/PR |
+| Stage | Model | Cost |
+|-------|-------|------|
+| Routing | Haiku 4.5 | ~$0.0001/PR |
+| Fast path retrieval | None | ~$0 |
+| Agent retrieval | Sonnet 4.6 | ~$0.10–0.30/PR |
+| Final review | Sonnet 4.6 (caller's responsibility) | ~$0.03/PR at 10K tokens |
 
-A lightweight classifier (diff statistics + heuristics) can automate this tiering
-without an extra LLM call. The router in `router.py` is already the right hook for
-this upgrade.
+At higher volumes, the agent stage can be further tiered: route moderate PRs
+(< 100 lines, < 5 symbols) to Haiku-based retrieval at ~$0.01/PR, reserving
+Sonnet for genuinely complex cases. The router in `router.py` is already the right
+hook — it currently outputs two classes but can be extended to three.
 
 ---
 

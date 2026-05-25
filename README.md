@@ -10,26 +10,28 @@ to send to an LLM — while staying within a token budget.
 PR diff
    │
    ▼
-┌─────────────┐   lines>60 OR files>3 OR symbols>2
-│   Router    │─────────────────────────────────────► Agent Path
-│ (heuristic) │                                       (Claude Sonnet tool-use loop)
-└─────────────┘                                              │
-   │ otherwise                                               │
-   ▼                                                         │
-Fast Path                                                    │
-(all retrievers, rank + pack)                                │
-   │                                                         │
-   └─────────────────────────────────────────────────────────┘
+┌──────────────────────┐   agent  ┌──────────────────────────────────────┐
+│   Router             │─────────►│  Agent Path                          │
+│ Haiku LLM (primary)  │          │  Claude Sonnet tool-use loop         │
+│ heuristic (fallback) │          │  10 tools, up to 8 turns             │
+└──────────────────────┘          └──────────────────────────────────────┘
+   │ fast                                        │
+   ▼                                             │
+Fast Path                                        │
+(all retrievers, diversity-aware pack)           │
+   │                                             │
+   └─────────────────────────────────────────────┘
                           │
                           ▼
               JSON retrieval plan + review prompt
 ```
 
-**Fast path**: deterministic, runs all retrievers, greedily packs to 8K token budget.
-~$0.001 in retrieval cost. Used for ~66% of PRs (sampled from httpx history).
+**Fast path**: deterministic, runs all retrievers, packs to 8K budget with diversity-aware
+knapsack. ~$0.0001 router call + zero retrieval cost. Used for ~66% of PRs.
 
-**Agent path**: Claude Sonnet with 9 tools, iterates until context is sufficient or hits
-8 turns / budget cap. Handles complex cross-file refactors. ~$0.10–0.30/PR.
+**Agent path**: Claude Sonnet with 10 tools (including `note` scratchpad), iterates until
+context is sufficient or hits 8 turns / budget cap. Handles complex cross-file refactors.
+~$0.10–0.30/PR.
 
 ## Retrievers
 
@@ -47,7 +49,8 @@ Fast Path                                                    │
 ## Requirements
 
 - Python >= 3.9
-- `ANTHROPIC_API_KEY` — required for agent path only; fast path runs without it
+- `ANTHROPIC_API_KEY` — used by the LLM router and agent path; fast path runs without it
+  (router falls back to heuristics when key is absent)
 
 ## Quickstart
 
@@ -88,7 +91,7 @@ python -m pr_context /path/to/repo my_pr.diff --budget 4096
 ```json
 {
   "mode": "fast",
-  "router_reasoning": "Fast path: 7 lines, 1 file(s), 1 symbol(s) — within thresholds.",
+  "router_reasoning": "[LLM router] Single-function bug fix with no interface changes — fast path is sufficient.",
   "diff_stats": {
     "files_changed": 1,
     "total_lines_changed": 7,
@@ -156,7 +159,7 @@ review prompt.
 ## Running tests
 
 ```bash
-pytest tests/ -v   # 21 tests, no API key needed
+pytest tests/ -v   # 26 tests, no API key needed
 ```
 
 ## Design
