@@ -27,26 +27,43 @@ def rank_and_pack(
             seen.add(key)
             deduplicated.append(r)
 
-    sorted_results = sorted(deduplicated, key=lambda r: r.priority, reverse=True)
-
+    # Diversity-aware greedy knapsack.
+    # At each step, pick the item with the highest *adjusted* priority, where
+    # adjusted = base_priority - 0.05 * (number of items already packed from same file).
+    # This prevents budget saturation by a single file when equally-good results
+    # exist across multiple files.
+    candidates = list(deduplicated)
     packed: list[RetrievalResult] = []
     excluded: list[dict] = []
     remaining = budget
+    file_packed_counts: dict[str, int] = {}
 
-    for r in sorted_results:
-        if r.estimated_tokens <= remaining:
-            packed.append(r)
-            remaining -= r.estimated_tokens
+    while candidates:
+        # Score each candidate with the current diversity penalty
+        best = max(
+            candidates,
+            key=lambda r: (
+                r.priority - 0.05 * file_packed_counts.get(r.file, 0),
+                r.priority,           # tiebreak: prefer higher base priority
+                -file_packed_counts.get(r.file, 0),  # tiebreak: prefer fresh files
+            ),
+        )
+        candidates.remove(best)
+
+        if best.estimated_tokens <= remaining:
+            packed.append(best)
+            remaining -= best.estimated_tokens
+            file_packed_counts[best.file] = file_packed_counts.get(best.file, 0) + 1
         else:
             excluded.append({
-                "source": r.source,
-                "symbol": r.symbol,
-                "file": r.file,
-                "lines": f"{r.start_line}-{r.end_line}",
-                "estimated_tokens": r.estimated_tokens,
-                "priority": r.priority,
+                "source": best.source,
+                "symbol": best.symbol,
+                "file": best.file,
+                "lines": f"{best.start_line}-{best.end_line}",
+                "estimated_tokens": best.estimated_tokens,
+                "priority": best.priority,
                 "reason_excluded": (
-                    f"Budget cutoff — needed {r.estimated_tokens} tokens, "
+                    f"Budget cutoff — needed {best.estimated_tokens} tokens, "
                     f"only {remaining} remaining."
                 ),
             })
