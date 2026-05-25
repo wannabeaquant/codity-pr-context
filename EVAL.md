@@ -56,7 +56,8 @@ would otherwise match `httpx._api.get`).
 ## PR2 — Refactor: utility functions moved from `_utils.py` to `_client.py`
 
 **Commit:** `7b19cd5`  
-**Router:** Escalated to agent — 75 lines (>60), 5 symbols (>2).
+**Router:** Escalated to agent — 75 lines (>60), 5 symbols (>2).  
+**Note:** Numbers below are from the fast-path fallback. Full agent trace requires `ANTHROPIC_API_KEY`.
 
 **Fast-path baseline (29 items, 4,524 tokens, 55.2% of budget):**
 - 6 caller sites — `UseClientDefault`, `_redirect_stream`, `primitive_value_to_str`
@@ -80,7 +81,8 @@ this PR type.
 ## PR3 — Feature: socks5h proxy support
 
 **Commit:** `12be5c4`  
-**Router:** Escalated to agent — 4 symbols changed (>2).
+**Router:** Escalated to agent — 4 symbols changed (>2).  
+**Note:** Numbers below are from the fast-path fallback. Full agent trace requires `ANTHROPIC_API_KEY`.
 
 **Fast-path baseline (48 items, 8,183 tokens, 99.9% of budget):**
 - 15 caller sites — `Proxy`, `HTTPTransport`, `AsyncHTTPTransport` callers
