@@ -165,4 +165,6 @@ pytest tests/ -v   # 26 tests, no API key needed
 ## Design
 
 See [DESIGN.md](DESIGN.md) for: retrieval strategy, ranking rationale, cost math,
-failure modes, scaling analysis, and per-PR eval breakdown.
+failure modes, and scaling analysis.
+
+See [EVAL.md](EVAL.md) for: per-PR retrieval breakdown, token counts, and excluded items.
