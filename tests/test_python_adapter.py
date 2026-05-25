@@ -71,3 +71,37 @@ def test_get_imports():
 def test_syntax_error_returns_empty():
     symbols = adapter.extract_top_level_symbols("def (broken:")
     assert symbols == []
+
+
+def test_extract_callees_detects_partial():
+    """functools.partial(fn, ...) should surface fn as an indirect callee."""
+    source = """\
+from functools import partial
+
+def target(): pass
+
+def foo():
+    bar = partial(target, 42)
+    return bar
+"""
+    callees = adapter.extract_callees(source, "foo")
+    assert "partial" in callees       # the direct call
+    assert "target" in callees        # the indirect callee via partial's first arg
+
+
+def test_extract_callees_detects_wraps():
+    """functools.wraps(fn) pattern — fn should be surfaced."""
+    source = """\
+from functools import wraps
+
+def original(): pass
+
+def decorator(func):
+    @wraps(original)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+"""
+    callees = adapter.extract_callees(source, "decorator")
+    assert "wraps" in callees
+    assert "original" in callees

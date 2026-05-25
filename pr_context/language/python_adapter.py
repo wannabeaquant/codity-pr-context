@@ -64,6 +64,12 @@ class PythonAdapter:
                 name = _extract_call_name(node)
                 if name:
                     callees.append(name)
+                # Extract first argument of partial(fn, ...) / wraps(fn) / lru_cache(fn)
+                # as an indirect callee — these patterns are invisible to direct call detection.
+                if name in ("partial", "wraps", "update_wrapper") and node.args:
+                    indirect = _extract_name_from_expr(node.args[0])
+                    if indirect:
+                        callees.append(indirect)
 
         return list(dict.fromkeys(callees))
 
@@ -106,4 +112,13 @@ def _extract_call_name(node: ast.Call) -> Optional[str]:
         return func.id
     if isinstance(func, ast.Attribute):
         return func.attr
+    return None
+
+
+def _extract_name_from_expr(node: ast.expr) -> Optional[str]:
+    """Extract a plain name from a Name or Attribute node (not a Call)."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
     return None
