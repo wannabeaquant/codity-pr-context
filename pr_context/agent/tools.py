@@ -78,13 +78,14 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "get_git_history",
-        "description": "Get recent git commit history for a line range in a file. Use to understand the intent behind existing code.",
+        "description": "Get recent git commit history for a symbol or line range. Prefer passing symbol_name when you know it — git can track the function across line number changes.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "source_file": {"type": "string", "description": "Repo-relative file path"},
                 "start_line": {"type": "integer"},
                 "end_line": {"type": "integer"},
+                "symbol_name": {"type": "string", "description": "Function/class name — enables name-based git log that survives line shifts"},
             },
             "required": ["source_file", "start_line", "end_line"],
         },
@@ -145,7 +146,8 @@ def dispatch_tool(
         return get_imports(repo_path, inputs["source_file"])
     elif name == "get_git_history":
         return get_git_history(
-            repo_path, inputs["source_file"], inputs["start_line"], inputs["end_line"]
+            repo_path, inputs["source_file"], inputs["start_line"], inputs["end_line"],
+            symbol=inputs.get("symbol_name", ""),
         )
     elif name == "grep_repo":
         return grep_repo(repo_path, inputs["pattern"], inputs.get("reason", ""))

@@ -23,9 +23,13 @@ def run_fast_path(repo_path: Path, diff: ParsedDiff) -> PackResult:
         # imports for every changed file (cheap, high signal)
         all_results.extend(get_imports(repo_path, hunk.file))
 
-        # git history for the changed line range
+        # git history for the changed line range; pass symbols for name-based log
+        hunk_symbols = [s for s in diff.changed_symbols
+                        if _find_symbol_file(repo_path, diff, s) == hunk.file]
+        sym = hunk_symbols[0] if hunk_symbols else ""
         all_results.extend(get_git_history(
-            repo_path, hunk.file, hunk.new_start, hunk.new_start + hunk.new_count
+            repo_path, hunk.file, hunk.new_start, hunk.new_start + hunk.new_count,
+            symbol=sym,
         ))
 
     for symbol in diff.changed_symbols:
