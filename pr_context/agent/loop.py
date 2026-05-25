@@ -41,6 +41,8 @@ def run_agent_path(
     accumulated_tokens = 0
     # Track (tool_name, canonical_inputs) to prevent duplicate calls
     seen_calls: set[tuple[str, str]] = set()
+    # Scratchpad: notes the agent writes to itself, prepended to every tool result
+    agent_notes: list[str] = []
 
     for turn in range(MAX_TURNS):
         response = client.messages.create(
@@ -66,9 +68,26 @@ def run_agent_path(
 
         # Check for `done` AFTER processing all tools in this turn
         done_call = next((t for t in tool_calls if t.name == "done"), None)
-        work_calls = [t for t in tool_calls if t.name != "done"]
+        # `note` is also handled separately — no retrieval, just scratchpad storage
+        note_calls = [t for t in tool_calls if t.name == "note"]
+        work_calls = [t for t in tool_calls if t.name not in ("done", "note")]
 
         tool_results_content: list[dict] = []
+
+        # Process notes first — they're acknowledged immediately with no retrieval
+        for note_call in note_calls:
+            note_text = note_call.input.get("text", "")
+            agent_notes.append(note_text)
+            tool_results_content.append({
+                "type": "tool_result",
+                "tool_use_id": note_call.id,
+                "content": f"Note recorded: {note_text!r}",
+            })
+            agent_trace.append({
+                "turn": turn + 1, "tool": "note",
+                "inputs": {"text": note_text},
+                "note": "scratchpad entry recorded",
+            })
 
         for tool_use in work_calls:
             tool_name = tool_use.name
@@ -105,7 +124,7 @@ def run_agent_path(
             tool_results_content.append({
                 "type": "tool_result",
                 "tool_use_id": tool_use.id,
-                "content": _format_results_summary(new_results, accumulated_tokens),
+                "content": _format_results_summary(new_results, accumulated_tokens, agent_notes),
             })
 
         # Handle `done` after all work tools in this turn
@@ -164,10 +183,24 @@ Do NOT call the same tool with the same inputs twice.
 """
 
 
-def _format_results_summary(results: list[RetrievalResult], accumulated: int) -> str:
+def _format_results_summary(
+    results: list[RetrievalResult],
+    accumulated: int,
+    notes: list[str] | None = None,
+) -> str:
+    lines = []
+    # Prepend scratchpad so the agent always sees its open threads
+    if notes:
+        lines.append("SCRATCHPAD (your notes so far):")
+        for i, note in enumerate(notes, 1):
+            lines.append(f"  [{i}] {note}")
+        lines.append("")
+
     if not results:
-        return f"No results found. Accumulated context: {accumulated} tokens."
-    lines = [f"Retrieved {len(results)} item(s). Accumulated context: {accumulated} tokens.\n"]
+        lines.append(f"No results found. Accumulated context: {accumulated} tokens.")
+        return "\n".join(lines)
+
+    lines.append(f"Retrieved {len(results)} item(s). Accumulated context: {accumulated} tokens.\n")
     for r in results:
         lines.append(
             f"  [{r.source}] {r.file}:{r.start_line}-{r.end_line} "

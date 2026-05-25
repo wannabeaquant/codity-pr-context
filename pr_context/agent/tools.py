@@ -117,6 +117,22 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "note",
+        "description": (
+            "Record a reasoning note to yourself — a thread you want to follow up on, "
+            "a suspicion about a breaking change, or a gap in the context so far. "
+            "Notes appear in every subsequent tool result so you don't lose track. "
+            "Use this instead of keeping things only in your head."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The note to record"},
+            },
+            "required": ["text"],
+        },
+    },
+    {
         "name": "done",
         "description": "Signal that you have collected sufficient context. Call this when you have everything needed for a high-quality review.",
         "input_schema": {
