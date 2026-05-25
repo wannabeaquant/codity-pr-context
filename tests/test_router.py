@@ -55,3 +55,18 @@ def test_threshold_boundary():
     diff = _make_diff(lines=60, files=3, symbols=2)
     mode, _ = route(diff)
     assert mode == "fast"
+
+
+def test_heuristic_fallback_when_no_diff_text():
+    """route() without diff_text always uses heuristic, not LLM."""
+    diff = _make_diff(lines=10, files=1, symbols=1)
+    mode, reasoning = route(diff, diff_text="")
+    assert mode == "fast"
+    assert "[heuristic]" in reasoning
+
+
+def test_heuristic_fallback_tag_on_escalation():
+    diff = _make_diff(lines=100, files=1, symbols=1)
+    mode, reasoning = route(diff, diff_text="")
+    assert mode == "agent"
+    assert "[heuristic]" in reasoning

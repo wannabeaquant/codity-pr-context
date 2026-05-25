@@ -31,7 +31,7 @@ def main(repo_path: Path, diff_path: Path, json_out: bool, budget: int, mode: st
         sys.exit(1)
 
     if mode == "auto":
-        selected_mode, router_reasoning = route(diff)
+        selected_mode, router_reasoning = route(diff, diff_text)
     else:
         selected_mode = mode  # type: ignore[assignment]
         router_reasoning = f"Mode forced to '{mode}' by --mode flag."
